@@ -14,7 +14,7 @@
   const CONFIG = {
     COMPANY_NAME: "Innotek Products",
     // Paste your Apps Script Web App URL here (see Code.gs setup notes)
-    GAS_URL: "https://script.google.com/macros/s/AKfycbzhax5dIcUpsDizPOSUqwhMPSnZs0zfr7-KhX61f3gIk6swlW3x9VVMwubfq20iUkCCeg/exec",
+    GAS_URL: "PASTE_YOUR_GAS_WEB_APP_URL_HERE",
     // Simple PIN to open the Admin Dashboard (change this)
     ADMIN_PIN: "1234",
     // Process sequence - order here is the order they appear on the form
@@ -123,6 +123,19 @@
   .section-box h2{font-size:15px; color:var(--navy); margin-bottom:4px;}
   .section-box .hint{font-size:12px; color:var(--muted); margin-bottom:10px;}
 
+  .entry-banner{
+    background:#FCF6E9; border:1.5px solid var(--gold); border-radius:10px;
+    padding:12px 14px; margin-bottom:14px; font-size:13px; color:var(--navy);
+  }
+  .entry-banner .eb-title{font-weight:700; margin-bottom:2px;}
+  .entry-banner .eb-sub{color:var(--muted); font-size:12px; margin-bottom:10px;}
+  .entry-banner .eb-actions{display:flex; gap:8px; flex-wrap:wrap;}
+  .entry-banner .eb-actions button{
+    flex:1; min-width:100px; padding:8px 10px; font-size:12.5px; font-weight:600;
+    border-radius:7px; border:1.5px solid var(--navy); background:#fff; color:var(--navy);
+  }
+  .entry-banner .eb-actions button.eb-danger{border-color:#F4C7C0; color:var(--danger);}
+
   /* Schedule works table (Tomorrow Targets) */
   .sw-row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
   .sw-row input{flex:none;}
@@ -207,6 +220,7 @@
   <!-- ============ NEW REPORT TAB ============ -->
   <section id="tab-report">
     <div id="reportFormView">
+      <div id="rpt_banner" class="entry-banner hidden"></div>
       <div class="topcard">
         <div class="field">
           <label>Reported By</label>
@@ -237,13 +251,15 @@
         <button class="btn btn-gold" onclick="downloadPdf('report')">📥 Download PDF</button>
         <button class="btn btn-wa" onclick="shareWhatsapp('report')">💬 Share via WhatsApp</button>
       </div>
-      <button class="btn btn-outline" style="margin-top:10px;" onclick="resetForm('report')">+ New Report</button>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="returnToFormView('report')">✏️ Back to Form (Edit)</button>
+      <button class="btn btn-outline" style="margin-top:8px; color:var(--danger); border-color:#F4C7C0;" onclick="resetForm('report')">🗑 Start New Entry</button>
     </div>
   </section>
 
   <!-- ============ TOMORROW TARGETS TAB ============ -->
   <section id="tab-target" class="hidden">
     <div id="targetFormView">
+      <div id="tgt_banner" class="entry-banner hidden"></div>
       <div class="topcard">
         <div class="field">
           <label>Reported By</label>
@@ -278,7 +294,8 @@
         <button class="btn btn-gold" onclick="downloadPdf('target')">📥 Download PDF</button>
         <button class="btn btn-wa" onclick="shareWhatsapp('target')">💬 Share via WhatsApp</button>
       </div>
-      <button class="btn btn-outline" style="margin-top:10px;" onclick="resetForm('target')">+ New Targets</button>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="returnToFormView('target')">✏️ Back to Form (Edit)</button>
+      <button class="btn btn-outline" style="margin-top:8px; color:var(--danger); border-color:#F4C7C0;" onclick="resetForm('target')">🗑 Start New Entry</button>
     </div>
   </section>
 
@@ -360,6 +377,85 @@
 let lastSubmission = { report: null, target: null };
 let allSubmissions = [];
 let scheduleRowCount = 0;
+const SAVED_KEY = { report: 'brt_saved_report', target: 'brt_saved_target' };
+
+/* ============================================================
+   PERSISTENCE (retain submitted entry until a new one is started)
+   ============================================================ */
+function persistEntry(kind){
+  const sub = lastSubmission[kind];
+  if(!sub) return;
+  try{
+    localStorage.setItem(SAVED_KEY[kind], JSON.stringify({
+      reporter: sub.reporter,
+      timestamp: sub.timestamp.toISOString(),
+      processRows: sub.processRows,
+      extra: sub.extra
+    }));
+  }catch(e){ console.error('Could not save entry locally:', e); }
+}
+
+function loadPersistedEntry(kind){
+  const raw = localStorage.getItem(SAVED_KEY[kind]);
+  if(!raw) return null;
+  try{
+    const obj = JSON.parse(raw);
+    obj.timestamp = new Date(obj.timestamp);
+    return obj;
+  }catch(e){ return null; }
+}
+
+function clearPersistedEntry(kind){
+  localStorage.removeItem(SAVED_KEY[kind]);
+}
+
+function populateFormFromEntry(kind, entry){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  document.getElementById(`${prefix}_reporter`).value = entry.reporter || '';
+  entry.processRows.forEach((r,i)=>{
+    const b = document.getElementById(`${prefix}_batch_${i}`);
+    const t = document.getElementById(`${prefix}_time_${i}`);
+    const s = document.getElementById(`${prefix}_spec_${i}`);
+    const m = document.getElementById(`${prefix}_remarks_${i}`);
+    if(b) b.value = r.batchNumber || '';
+    if(t) t.value = r.estTime || '';
+    if(s) s.value = r.specialistTeam || '';
+    if(m) m.value = r.remarks || '';
+  });
+  if(kind==='report'){
+    document.getElementById('rpt_nonBatch').value = (entry.extra && entry.extra.nonBatch) || '';
+  } else {
+    document.getElementById('tgt_scheduleRows').innerHTML = '';
+    scheduleRowCount = 0;
+    const swRows = (entry.extra && entry.extra.scheduleRows) || [];
+    if(swRows.length){
+      swRows.forEach(sr => addScheduleRow(sr.work, sr.name));
+    } else {
+      for(let i=0;i<4;i++) addScheduleRow();
+    }
+  }
+  lastSubmission[kind] = entry;
+}
+
+function showEntryBanner(kind, entry){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  const banner = document.getElementById(`${prefix}_banner`);
+  const when = entry.timestamp instanceof Date && !isNaN(entry.timestamp) ? entry.timestamp.toLocaleString() : '';
+  banner.innerHTML = `
+    <div class="eb-title">📌 Showing your last saved entry</div>
+    <div class="eb-sub">${entry.reporter || 'Unknown'} · ${when}. Edit below and re-submit, or regenerate outputs.</div>
+    <div class="eb-actions">
+      <button onclick="downloadPdf('${kind}')">📥 PDF</button>
+      <button onclick="shareWhatsapp('${kind}')">💬 WhatsApp</button>
+      <button class="eb-danger" onclick="resetForm('${kind}')">🗑 Start New</button>
+    </div>`;
+  banner.classList.remove('hidden');
+}
+
+function hideEntryBanner(kind){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  document.getElementById(`${prefix}_banner`).classList.add('hidden');
+}
 
 /* ============================================================
    INIT
@@ -379,8 +475,17 @@ function init(){
   renderProcessList('rpt', 'rpt_processList', 'Estimated End Time');
   renderProcessList('tgt', 'tgt_processList', 'Estimated Start Time');
 
-  // seed schedule works with a few empty rows
+  // seed schedule works with a few empty rows (may be replaced below if a saved entry exists)
   for(let i=0;i<4;i++) addScheduleRow();
+
+  // Restore any previously submitted entry that hasn't been cleared yet
+  ['report','target'].forEach(kind=>{
+    const saved = loadPersistedEntry(kind);
+    if(saved){
+      populateFormFromEntry(kind, saved);
+      showEntryBanner(kind, saved);
+    }
+  });
 
   // populate admin process filter
   const filterProcess = document.getElementById('filterProcess');
@@ -452,15 +557,15 @@ function collectProcessRows(prefix){
 /* ============================================================
    SCHEDULE WORKS (Tomorrow Targets)
    ============================================================ */
-function addScheduleRow(){
+function addScheduleRow(workVal, nameVal){
   const id = scheduleRowCount++;
   const wrap = document.getElementById('tgt_scheduleRows');
   const row = document.createElement('div');
   row.className = 'sw-row';
   row.id = 'sw_row_'+id;
   row.innerHTML = `
-    <input type="text" class="sw-work" id="sw_work_${id}" placeholder="Work item">
-    <input type="text" class="sw-name" id="sw_name_${id}" placeholder="Name">
+    <input type="text" class="sw-work" id="sw_work_${id}" placeholder="Work item" value="${(workVal||'').replace(/"/g,'&quot;')}">
+    <input type="text" class="sw-name" id="sw_name_${id}" placeholder="Name" value="${(nameVal||'').replace(/"/g,'&quot;')}">
     <button class="sw-del" onclick="document.getElementById('sw_row_${id}').remove()">×</button>`;
   wrap.appendChild(row);
 }
@@ -575,14 +680,38 @@ function showSuccess(kind){
     kind==='report'
       ? `${filled} of ${CONFIG.PROCESSES.length} processes logged by ${sub.reporter}.`
       : `Targets set for ${filled} of ${CONFIG.PROCESSES.length} processes by ${sub.reporter}.`;
+
+  persistEntry(kind); // keep this entry available (PDF/WhatsApp/edit) until a new one is started
+
   document.getElementById(formViewId).classList.add('hidden');
   document.getElementById(successViewId).classList.remove('hidden');
+}
+
+/* Go back to the entry form, pre-filled with the last submitted/persisted entry.
+   Used after "Back to Form (Edit)" and automatically after sharing via WhatsApp
+   (so the person always lands on a usable page, never a blank one). */
+function returnToFormView(kind){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  const formViewId = kind==='report' ? 'reportFormView' : 'targetFormView';
+  const successViewId = kind==='report' ? 'reportSuccessView' : 'targetSuccessView';
+  const sub = lastSubmission[kind] || loadPersistedEntry(kind);
+
+  if(sub){
+    populateFormFromEntry(kind, sub);
+    showEntryBanner(kind, sub);
+  }
+  document.getElementById(successViewId).classList.add('hidden');
+  document.getElementById(formViewId).classList.remove('hidden');
 }
 
 function resetForm(kind){
   const prefix = kind==='report' ? 'rpt' : 'tgt';
   const formViewId = kind==='report' ? 'reportFormView' : 'targetFormView';
   const successViewId = kind==='report' ? 'reportSuccessView' : 'targetSuccessView';
+
+  clearPersistedEntry(kind);
+  lastSubmission[kind] = null;
+  hideEntryBanner(kind);
 
   renderProcessList(prefix, `${prefix}_processList`, kind==='report' ? 'Estimated End Time' : 'Estimated Start Time');
   if(kind==='report'){
@@ -703,7 +832,28 @@ function shareWhatsapp(kind){
 ${lines || '(no entries)'}
 ${extraText}`;
 
-  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  openWhatsAppLink(`https://wa.me/?text=${encodeURIComponent(text)}`);
+
+  // Land back on a usable page (pre-filled form) instead of a blank/stuck screen.
+  // Persisted data means the entry is not lost even if the browser fully navigates away.
+  returnToFormView(kind);
+}
+
+/* Opens a WhatsApp share link in a way that avoids the "blank tab" issue some
+   mobile browsers show with window.open(url, '_blank') for wa.me links. */
+function openWhatsAppLink(url){
+  try{
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }catch(e){
+    console.error('WhatsApp link failed, falling back to direct navigation:', e);
+    window.location.href = url;
+  }
 }
 
 /* ============================================================
@@ -721,22 +871,61 @@ function checkPin(){
 }
 
 function loadSubmissions(){
+  const tableEmpty = document.getElementById('tableEmpty');
+
   if(CONFIG.GAS_URL.includes('PASTE_YOUR')){
-    document.getElementById('tableEmpty').textContent = 'Backend not configured yet — set GAS_URL in the code.';
-    document.getElementById('tableEmpty').classList.remove('hidden');
+    tableEmpty.textContent = 'Backend not configured yet — set GAS_URL in the code.';
+    tableEmpty.classList.remove('hidden');
+    document.getElementById('tableBody').innerHTML = '';
     return;
   }
+
+  tableEmpty.textContent = 'Loading…';
+  tableEmpty.classList.remove('hidden');
+  document.getElementById('tableBody').innerHTML = '';
+
   const callbackName = 'brt_cb_' + Date.now();
+  let settled = false;
+
+  const cleanup = ()=>{
+    delete window[callbackName];
+    if(script.parentNode) script.remove();
+    clearTimeout(timeoutId);
+  };
+
+  const timeoutId = setTimeout(()=>{
+    if(settled) return;
+    settled = true;
+    cleanup();
+    tableEmpty.textContent = 'Could not load data (timed out after 12s). Check: 1) GAS_URL is correct in the code, 2) the Apps Script deployment access is set to "Anyone", 3) you created a NEW deployment version after any Code.gs edit (Deploy → Manage deployments → Edit → New version).';
+    tableEmpty.classList.remove('hidden');
+  }, 12000);
+
   window[callbackName] = function(data){
-    allSubmissions = data || [];
+    if(settled) return;
+    settled = true;
+    cleanup();
+    allSubmissions = Array.isArray(data) ? data : [];
     renderStats();
     renderTable();
-    delete window[callbackName];
-    script.remove();
   };
+
   const script = document.createElement('script');
+  script.onerror = function(){
+    if(settled) return;
+    settled = true;
+    cleanup();
+    tableEmpty.textContent = 'Failed to reach the backend. Check GAS_URL and your internet connection, then tap Refresh Data.';
+    tableEmpty.classList.remove('hidden');
+  };
   script.src = `${CONFIG.GAS_URL}?callback=${callbackName}&t=${Date.now()}`;
   document.body.appendChild(script);
+}
+
+function safeDateKey(ts){
+  const d = new Date(ts);
+  if(isNaN(d)) return null;
+  return d.toISOString().slice(0,10);
 }
 
 function renderStats(){
@@ -758,13 +947,15 @@ function renderTable(){
     if(type && r.ReportType !== type) return false;
     if(process && r.Process !== process) return false;
     if(batch && !String(r.BatchNumber||'').toLowerCase().includes(batch)) return false;
-    if(date && new Date(r.Timestamp).toISOString().slice(0,10) !== date) return false;
+    if(date && safeDateKey(r.Timestamp) !== date) return false;
     return true;
   });
 
   const tbody = document.getElementById('tableBody');
   tbody.innerHTML = '';
-  document.getElementById('tableEmpty').classList.toggle('hidden', rows.length>0);
+  const tableEmpty = document.getElementById('tableEmpty');
+  tableEmpty.textContent = allSubmissions.length === 0 ? 'No entries submitted yet.' : 'No entries match these filters.';
+  tableEmpty.classList.toggle('hidden', rows.length>0);
 
   rows.forEach(r=>{
     tbody.innerHTML += `
@@ -920,7 +1111,7 @@ function shareCombinedWhatsapp(){
 *Contributors:* ${combinedData.reporters.join(', ') || '-'}
 
 ${lines.join('\n')}`;
-  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  openWhatsAppLink(`https://wa.me/?text=${encodeURIComponent(text)}`);
 }
 
 /* ============================================================
