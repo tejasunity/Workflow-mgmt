@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Batch Report Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+  /* =====================================================
+     CONFIG - edit these to match your factory
+     ===================================================== */
+  const CONFIG = {
+    COMPANY_NAME: "Innotek Products",
+    // Paste your Apps Script Web App URL here (see Code.gs setup notes)
+    GAS_URL: "PASTE_YOUR_GAS_WEB_APP_URL_HERE",
+    // Simple PIN to open the Admin Dashboard (change this)
+    ADMIN_PIN: "1234",
+    // Process sequence - order here is the order they appear on the form
+    PROCESSES: [
+      "Pre-Mix", "CB", "Decant", "Tank Wash", "RDS",
+      "Centrifuge", "Drying", "Blending", "Vibro Blending",
+      "Packaging", "QC", "Dispatch", "ETP"
+    ],
+    // Preset reference task checklist per process (not entered daily -
+    // used only by the "Generate Preset Task List" admin reference button)
+    DEFAULT_TASKS: [
+      "Pre-shift safety check",
+      "Machine/area cleanliness check",
+      "Verify batch documentation on hand",
+      "Record start reading / parameters",
+      "Shift handover note completed"
+    ],
+    TASKS_BY_PROCESS: {
+      "Pre-Mix": ["Verify raw material batch & quantity", "Calibrate weighing scale", "Check mixer blade condition", "Record pre-mix parameters", "Safety guard check"],
+      "CB": ["Check CB tank temperature", "Verify chemical dosing", "Inspect seals for leaks", "Record CB cycle time"],
+      "Decant": ["Check decant flow rate", "Inspect filter mesh", "Record decant output volume"],
+      "Tank Wash": ["Verify wash water quality", "Check tank for residue", "Record wash cycle count"],
+      "RDS": ["Check RDS drum condition", "Verify rotation speed", "Record RDS output"],
+      "Centrifuge": ["Inspect centrifuge basket", "Check vibration levels", "Record moisture % output"],
+      "Drying": ["Check dryer temperature", "Verify airflow", "Record drying time & moisture reading"],
+      "Blending": ["Verify blend ratio as per formulation", "Check blender rotation/mixing time", "Sample blended output for consistency", "Record blend batch quantity"],
+      "Vibro Blending": ["Check vibro screen mesh condition", "Verify vibration frequency setting", "Inspect for material spillage", "Record vibro output quantity"],
+      "Packaging": ["Check bag/label accuracy", "Verify net weight per bag", "Inspect sealing machine", "Record packed quantity"],
+      "QC": ["Pull QC samples per SOP", "Run pH / bulk density test", "Record mesh analysis result", "Approve/reject batch"],
+      "Dispatch": ["Verify dispatch quantity vs order", "Check vehicle loading", "Confirm dispatch documents", "Record dispatch time"],
+      "ETP": ["Check effluent pH before treatment", "Verify chemical dosing levels", "Inspect aeration/settling tank", "Record treated water discharge parameters", "Sludge disposal check"]
+    }
+  };
+</script>
+<style>
+  :root{
+    --navy:#0F2942; --navy-2:#16385A; --gold:#C9A961; --gold-dk:#A9823F;
+    --bg:#F5F6F8; --card:#FFFFFF; --line:#E4E7EC; --text:#1B2430; --muted:#6B7686;
+    --ok:#1E8E5A; --warn:#C9863D; --danger:#C0392B;
+    --radius:12px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:'Inter',sans-serif; -webkit-font-smoothing:antialiased;}
+  body{padding-bottom:calc(24px + env(safe-area-inset-bottom));}
+  h1,h2,h3{font-family:'Outfit',sans-serif; margin:0;}
+  button{font-family:'Inter',sans-serif; cursor:pointer;}
+  input,select,textarea{font-family:'Inter',sans-serif;}
+
+  header{
+    background:linear-gradient(135deg,var(--navy),var(--navy-2));
+    color:#fff; padding:calc(14px + env(safe-area-inset-top)) 16px 14px;
+    position:sticky; top:0; z-index:20;
+  }
+  header .brand{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  header .brand-left{display:flex; flex-direction:column; gap:2px;}
+  header .co{font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gold); font-weight:600;}
+  header h1{font-size:18px; font-weight:700;}
+
+  nav.tabs{display:flex; gap:6px; margin-top:12px;}
+  nav.tabs button{
+    flex:1; background:rgba(255,255,255,.08); color:#fff; border:1px solid rgba(255,255,255,.15);
+    padding:9px 4px; border-radius:9px; font-size:12px; font-weight:600; letter-spacing:.01em;
+    transition:.15s;
+  }
+  nav.tabs button.active{background:var(--gold); color:var(--navy); border-color:var(--gold);}
+
+  main{max-width:760px; margin:0 auto; padding:16px 14px 40px;}
+
+  /* Top info card (reporter / date) */
+  .topcard{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px; margin-bottom:14px; display:flex; gap:12px; align-items:flex-end;}
+  .topcard .field{flex:1; margin-bottom:0;}
+  .topcard .datepill{font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap; padding-bottom:11px;}
+
+  label{display:block; font-size:10.5px; font-weight:600; color:var(--muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:.03em;}
+  .field{margin-bottom:10px;}
+  input[type=text], input[type=time], select, textarea{
+    width:100%; padding:8px 10px; border:1.5px solid var(--line); border-radius:8px;
+    font-size:14px; background:#fbfbfc; color:var(--text); height:38px;
+  }
+  textarea{height:auto; min-height:38px; resize:vertical; line-height:1.35; padding-top:8px;}
+  input:focus, select:focus, textarea:focus{outline:2px solid var(--gold); border-color:var(--gold); background:#fff;}
+
+  /* Process boxes */
+  .proc-box{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:12px 12px 10px; margin-bottom:10px;
+  }
+  .proc-box .proc-title{
+    display:flex; align-items:center; gap:8px; margin-bottom:10px;
+  }
+  .proc-box .proc-num{
+    width:22px; height:22px; border-radius:6px; background:var(--navy); color:var(--gold);
+    font-family:'Outfit',sans-serif; font-size:11px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .proc-box .proc-name{font-family:'Outfit',sans-serif; font-size:14.5px; font-weight:700; color:var(--navy);}
+  .proc-row{display:flex; gap:8px; margin-bottom:8px;}
+  .proc-row:last-child{margin-bottom:0;}
+  .proc-row .field{margin-bottom:0;}
+  .proc-row .cell-eq{flex:1;}
+  .proc-row .cell-narrow{flex:1;}
+  .proc-row .cell-wide{flex:1.6;}
+
+  .section-box{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px; margin:16px 0;}
+  .section-box h2{font-size:15px; color:var(--navy); margin-bottom:4px;}
+  .section-box .hint{font-size:12px; color:var(--muted); margin-bottom:10px;}
+
+  /* Schedule works table (Tomorrow Targets) */
+  .sw-row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
+  .sw-row input{flex:none;}
+  .sw-row .sw-work{flex:2.2;}
+  .sw-row .sw-name{flex:1;}
+  .sw-row .sw-del{
+    flex:none; width:34px; height:34px; border:none; background:#FDEDEB; color:var(--danger);
+    border-radius:8px; font-size:16px; font-weight:700; line-height:1;
+  }
+  .sw-head{display:flex; gap:8px; margin-bottom:6px;}
+  .sw-head span{font-size:10.5px; font-weight:700; text-transform:uppercase; color:var(--muted); letter-spacing:.03em;}
+  .sw-head .sw-work{flex:2.2;}
+  .sw-head .sw-name{flex:1;}
+  .sw-head .sw-sp{flex:none; width:34px;}
+
+  .btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;
+    padding:13px 16px; border-radius:10px; border:none; font-size:15px; font-weight:700;}
+  .btn-primary{background:var(--navy); color:#fff;}
+  .btn-primary:active{background:var(--navy-2);}
+  .btn-gold{background:var(--gold); color:var(--navy);}
+  .btn-wa{background:#25D366; color:#fff;}
+  .btn-outline{background:#fff; color:var(--navy); border:1.5px solid var(--navy);}
+  .btn-sm{padding:9px 12px; font-size:13px; width:auto;}
+  .btn-row{display:flex; gap:10px; flex-wrap:wrap;}
+  .btn-row .btn{flex:1; min-width:140px;}
+
+  .msg{padding:12px 14px; border-radius:9px; font-size:13.5px; margin-bottom:14px;}
+  .msg-error{background:#FDEDEB; color:var(--danger); border:1px solid #F4C7C0;}
+  .msg-success{background:#EAF6EF; color:var(--ok); border:1px solid #BFE6CE;}
+
+  .success-box{text-align:center; padding:10px 0 4px;}
+  .success-box .check{width:56px; height:56px; border-radius:50%; background:var(--ok); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:28px; margin:0 auto 12px;}
+  .success-box p{color:var(--muted); font-size:14px; margin:4px 0 18px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px; margin-bottom:16px;}
+
+  /* Admin */
+  .pin-box{max-width:280px; margin:60px auto; text-align:center;}
+  .pin-box input{text-align:center; letter-spacing:.3em; font-size:20px;}
+  .stat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px;}
+  .stat{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 10px; text-align:center;}
+  .stat .num{font-family:'Outfit',sans-serif; font-size:22px; font-weight:700; color:var(--navy);}
+  .stat .lbl{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin-top:2px;}
+  .filters{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .filters select, .filters input{flex:1; min-width:110px; padding:9px 10px; font-size:13px; height:auto;}
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th{text-align:left; padding:8px 6px; color:var(--muted); font-size:10.5px; text-transform:uppercase;
+    border-bottom:2px solid var(--line); letter-spacing:.02em; white-space:nowrap;}
+  td{padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top;}
+  .badge{display:inline-block; padding:2px 8px; border-radius:20px; font-size:10.5px; font-weight:600; white-space:nowrap;}
+  .badge-ok{background:#EAF6EF; color:var(--ok);}
+  .badge-warn{background:#FCF2E6; color:var(--warn);}
+  .table-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  .empty{text-align:center; color:var(--muted); padding:30px 10px; font-size:14px;}
+  .hidden{display:none !important;}
+  .spinner{width:18px; height:18px; border:2.5px solid rgba(255,255,255,.4); border-top-color:#fff;
+    border-radius:50%; animation:spin .7s linear infinite; display:inline-block;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @media(max-width:380px){
+    .proc-row{flex-direction:column;}
+    .proc-row .cell-wide, .proc-row .cell-eq, .proc-row .cell-narrow{flex:none; width:100%;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-left">
+      <span class="co" id="companyLabel">Company</span>
+      <h1>Batch Report Tracker</h1>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button id="tabReportBtn" class="active" onclick="switchTab('report')">New Report</button>
+    <button id="tabTargetBtn" onclick="switchTab('target')">Tomorrow Targets</button>
+    <button id="tabAdminBtn" onclick="switchTab('admin')">Admin Dashboard</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ============ NEW REPORT TAB ============ -->
+  <section id="tab-report">
+    <div id="reportFormView">
+      <div class="topcard">
+        <div class="field">
+          <label>Reported By</label>
+          <input type="text" id="rpt_reporter" placeholder="Your name" autocomplete="off">
+        </div>
+        <div class="datepill" id="rpt_dateLabel"></div>
+      </div>
+
+      <div id="rpt_processList"></div>
+
+      <div class="section-box">
+        <h2>Non-Batch Works</h2>
+        <div class="hint">Any work today not tied to a specific batch (maintenance, housekeeping, projects, etc.)</div>
+        <textarea id="rpt_nonBatch" placeholder="Describe non-batch work carried out today..." style="min-height:80px;"></textarea>
+      </div>
+
+      <div id="rpt_msg"></div>
+      <button class="btn btn-primary" onclick="submitForm('report')" id="rpt_submitBtn">Submit & Generate Report</button>
+    </div>
+
+    <div id="reportSuccessView" class="card hidden">
+      <div class="success-box">
+        <div class="check">✓</div>
+        <h2>Report Submitted</h2>
+        <p id="rpt_successSub">Today's process report saved successfully.</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-gold" onclick="downloadPdf('report')">📥 Download PDF</button>
+        <button class="btn btn-wa" onclick="shareWhatsapp('report')">💬 Share via WhatsApp</button>
+      </div>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="resetForm('report')">+ New Report</button>
+    </div>
+  </section>
+
+  <!-- ============ TOMORROW TARGETS TAB ============ -->
+  <section id="tab-target" class="hidden">
+    <div id="targetFormView">
+      <div class="topcard">
+        <div class="field">
+          <label>Reported By</label>
+          <input type="text" id="tgt_reporter" placeholder="Your name" autocomplete="off">
+        </div>
+        <div class="datepill" id="tgt_dateLabel"></div>
+      </div>
+
+      <div id="tgt_processList"></div>
+
+      <div class="section-box">
+        <h2>Schedule Works</h2>
+        <div class="hint">Non-batch work items planned for tomorrow, with who's assigned.</div>
+        <div class="sw-head">
+          <span class="sw-work">Work</span><span class="sw-name">Name</span><span class="sw-sp"></span>
+        </div>
+        <div id="tgt_scheduleRows"></div>
+        <button class="btn btn-outline btn-sm" onclick="addScheduleRow()" style="margin-top:4px;">+ Add Row</button>
+      </div>
+
+      <div id="tgt_msg"></div>
+      <button class="btn btn-primary" onclick="submitForm('target')" id="tgt_submitBtn">Submit & Generate Report</button>
+    </div>
+
+    <div id="targetSuccessView" class="card hidden">
+      <div class="success-box">
+        <div class="check">✓</div>
+        <h2>Targets Submitted</h2>
+        <p id="tgt_successSub">Tomorrow's targets saved successfully.</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-gold" onclick="downloadPdf('target')">📥 Download PDF</button>
+        <button class="btn btn-wa" onclick="shareWhatsapp('target')">💬 Share via WhatsApp</button>
+      </div>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="resetForm('target')">+ New Targets</button>
+    </div>
+  </section>
+
+  <!-- ============ ADMIN TAB ============ -->
+  <section id="tab-admin" class="hidden">
+
+    <div id="pinView" class="pin-box">
+      <h2 style="margin-bottom:6px;">Admin Access</h2>
+      <p style="color:var(--muted); font-size:13px; margin-bottom:16px;">Enter PIN to view the dashboard</p>
+      <input type="text" id="pinInput" inputmode="numeric" maxlength="6" placeholder="••••">
+      <button class="btn btn-primary" style="margin-top:12px;" onclick="checkPin()">Unlock</button>
+      <div id="pinMsg" style="color:var(--danger); font-size:13px; margin-top:8px;"></div>
+    </div>
+
+    <div id="dashboardView" class="hidden">
+      <div class="stat-grid">
+        <div class="stat"><div class="num" id="statTotal">0</div><div class="lbl">Total Entries</div></div>
+        <div class="stat"><div class="num" id="statToday">0</div><div class="lbl">Today</div></div>
+        <div class="stat"><div class="num" id="statBatches">0</div><div class="lbl">Batches</div></div>
+      </div>
+
+      <div class="card" style="padding:16px;">
+        <h2 style="font-size:15px; color:var(--navy); margin-bottom:10px;">Preset Task Reference</h2>
+        <div class="hint" style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+          Not entered daily yet — generate a printable per-process checklist as a reminder for later.
+        </div>
+        <button class="btn btn-outline" onclick="generatePresetTaskList()">📋 Generate Preset Task List</button>
+      </div>
+
+      <div class="card" style="padding:16px;">
+        <div class="filters">
+          <select id="filterType" onchange="renderTable()">
+            <option value="">All Types</option>
+            <option value="Actual">New Report</option>
+            <option value="Target">Tomorrow Targets</option>
+          </select>
+          <select id="filterProcess" onchange="renderTable()"><option value="">All Processes</option></select>
+          <input type="text" id="filterBatch" placeholder="Filter by Batch #" oninput="renderTable()">
+          <input type="date" id="filterDate" onchange="renderTable()">
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Time</th><th>Type</th><th>Process</th><th>Batch #</th><th>Est. Time</th><th>Specialist/Team</th><th>Remarks / Work</th></tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+        <div id="tableEmpty" class="empty hidden">No entries found.</div>
+      </div>
+
+      <button class="btn btn-outline" onclick="loadSubmissions()">↻ Refresh Data</button>
+    </div>
+
+  </section>
+
+</main>
+
+<script>
+/* ============================================================
+   STATE
+   ============================================================ */
+let lastSubmission = { report: null, target: null };
+let allSubmissions = [];
+let scheduleRowCount = 0;
+
+/* ============================================================
+   INIT
+   ============================================================ */
+function init(){
+  document.getElementById('companyLabel').textContent = CONFIG.COMPANY_NAME;
+  const todayStr = new Date().toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+  document.getElementById('rpt_dateLabel').textContent = todayStr;
+
+  const tmrw = new Date(); tmrw.setDate(tmrw.getDate()+1);
+  document.getElementById('tgt_dateLabel').textContent =
+    tmrw.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+
+  document.getElementById('rpt_reporter').value = localStorage.getItem('brt_reporter') || '';
+  document.getElementById('tgt_reporter').value = localStorage.getItem('brt_reporter') || '';
+
+  renderProcessList('rpt', 'rpt_processList', 'Estimated End Time');
+  renderProcessList('tgt', 'tgt_processList', 'Estimated Start Time');
+
+  // seed schedule works with a few empty rows
+  for(let i=0;i<4;i++) addScheduleRow();
+
+  // populate admin process filter
+  const filterProcess = document.getElementById('filterProcess');
+  CONFIG.PROCESSES.forEach(p=>{
+    filterProcess.innerHTML += `<option value="${p}">${p}</option>`;
+  });
+}
+
+function switchTab(tab){
+  document.getElementById('tab-report').classList.toggle('hidden', tab!=='report');
+  document.getElementById('tab-target').classList.toggle('hidden', tab!=='target');
+  document.getElementById('tab-admin').classList.toggle('hidden', tab!=='admin');
+  document.getElementById('tabReportBtn').classList.toggle('active', tab==='report');
+  document.getElementById('tabTargetBtn').classList.toggle('active', tab==='target');
+  document.getElementById('tabAdminBtn').classList.toggle('active', tab==='admin');
+}
+
+/* ============================================================
+   PROCESS LIST RENDERING (shared by New Report & Tomorrow Targets)
+   ============================================================ */
+function renderProcessList(prefix, containerId, timeLabel){
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  CONFIG.PROCESSES.forEach((proc, i)=>{
+    const num = String(i+1).padStart(2,'0');
+    container.innerHTML += `
+      <div class="proc-box">
+        <div class="proc-title">
+          <div class="proc-num">${num}</div>
+          <div class="proc-name">${proc}</div>
+        </div>
+        <div class="proc-row">
+          <div class="field cell-eq">
+            <label>Batch Number</label>
+            <input type="text" id="${prefix}_batch_${i}" placeholder="e.g. BATCH-2026-014">
+          </div>
+          <div class="field cell-eq">
+            <label>${timeLabel}</label>
+            <input type="time" id="${prefix}_time_${i}">
+          </div>
+        </div>
+        <div class="proc-row">
+          <div class="field cell-narrow">
+            <label>Specialist + Team</label>
+            <input type="text" id="${prefix}_spec_${i}" placeholder="Name + team size">
+          </div>
+          <div class="field cell-wide">
+            <label>Remarks / Observations</label>
+            <input type="text" id="${prefix}_remarks_${i}" placeholder="Notes, deviations, observations">
+          </div>
+        </div>
+      </div>`;
+  });
+}
+
+function collectProcessRows(prefix){
+  return CONFIG.PROCESSES.map((proc,i)=>({
+    process: proc,
+    batchNumber: document.getElementById(`${prefix}_batch_${i}`).value.trim(),
+    estTime: document.getElementById(`${prefix}_time_${i}`).value,
+    specialistTeam: document.getElementById(`${prefix}_spec_${i}`).value.trim(),
+    remarks: document.getElementById(`${prefix}_remarks_${i}`).value.trim()
+  }));
+}
+
+/* ============================================================
+   SCHEDULE WORKS (Tomorrow Targets)
+   ============================================================ */
+function addScheduleRow(){
+  const id = scheduleRowCount++;
+  const wrap = document.getElementById('tgt_scheduleRows');
+  const row = document.createElement('div');
+  row.className = 'sw-row';
+  row.id = 'sw_row_'+id;
+  row.innerHTML = `
+    <input type="text" class="sw-work" id="sw_work_${id}" placeholder="Work item">
+    <input type="text" class="sw-name" id="sw_name_${id}" placeholder="Name">
+    <button class="sw-del" onclick="document.getElementById('sw_row_${id}').remove()">×</button>`;
+  wrap.appendChild(row);
+}
+
+function collectScheduleRows(){
+  const rows = [];
+  document.querySelectorAll('#tgt_scheduleRows .sw-row').forEach(r=>{
+    const workEl = r.querySelector('.sw-work');
+    const nameEl = r.querySelector('.sw-name');
+    const work = workEl.value.trim();
+    const name = nameEl.value.trim();
+    if(work || name) rows.push({work, name});
+  });
+  return rows;
+}
+
+/* ============================================================
+   SUBMIT
+   ============================================================ */
+function submitForm(kind){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  const reporter = document.getElementById(`${prefix}_reporter`).value.trim();
+  const msgBox = document.getElementById(`${prefix}_msg`);
+  const submitBtn = document.getElementById(`${prefix}_submitBtn`);
+
+  if(!reporter){
+    msgBox.innerHTML = `<div class="msg msg-error">Please enter your name in "Reported By".</div>`;
+    return;
+  }
+  msgBox.innerHTML = '';
+  localStorage.setItem('brt_reporter', reporter);
+
+  const processRows = collectProcessRows(prefix);
+  const submissionId = kind + '_' + Date.now();
+  const timestamp = new Date();
+
+  let rows = [];
+  processRows.forEach(pr=>{
+    rows.push({
+      submissionId, reportType: kind==='report' ? 'Actual' : 'Target',
+      process: pr.process, batchNumber: pr.batchNumber, estTime: pr.estTime,
+      specialistTeam: pr.specialistTeam, remarks: pr.remarks
+    });
+  });
+
+  let extra = null;
+  if(kind === 'report'){
+    const nonBatch = document.getElementById('rpt_nonBatch').value.trim();
+    extra = { nonBatch };
+    if(nonBatch){
+      rows.push({submissionId, reportType:'Actual', process:'Non-Batch Works',
+        batchNumber:'', estTime:'', specialistTeam:'', remarks: nonBatch});
+    }
+  } else {
+    const scheduleRows = collectScheduleRows();
+    extra = { scheduleRows };
+    scheduleRows.forEach(sr=>{
+      rows.push({submissionId, reportType:'Target', process:'Schedule Work',
+        batchNumber:'', estTime:'', specialistTeam: sr.name, remarks: sr.work});
+    });
+  }
+
+  lastSubmission[kind] = { reporter, timestamp, processRows, extra };
+
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<span class="spinner"></span> Saving...`;
+
+  if(CONFIG.GAS_URL.includes('PASTE_YOUR')){
+    showSuccess(kind);
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('rows', JSON.stringify(rows));
+
+  fetch(CONFIG.GAS_URL, {method:'POST', mode:'no-cors', body: fd})
+    .then(()=> showSuccess(kind))
+    .catch(()=> showSuccess(kind));
+}
+
+function showSuccess(kind){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  document.getElementById(`${prefix}_submitBtn`).disabled = false;
+  document.getElementById(`${prefix}_submitBtn`).textContent = 'Submit & Generate Report';
+  const sub = lastSubmission[kind];
+  const filled = sub.processRows.filter(r=>r.batchNumber || r.remarks).length;
+  document.getElementById(`${prefix}_successSub`).textContent =
+    kind==='report'
+      ? `${filled} of ${CONFIG.PROCESSES.length} processes logged by ${sub.reporter}.`
+      : `Targets set for ${filled} of ${CONFIG.PROCESSES.length} processes by ${sub.reporter}.`;
+  document.getElementById(`${prefix}FormView`).classList.add('hidden');
+  document.getElementById(`${prefix==='rpt'?'report':'target'}SuccessView`).classList.remove('hidden');
+}
+
+function resetForm(kind){
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  renderProcessList(prefix, `${prefix}_processList`, kind==='report' ? 'Estimated End Time' : 'Estimated Start Time');
+  if(kind==='report'){
+    document.getElementById('rpt_nonBatch').value = '';
+  } else {
+    document.getElementById('tgt_scheduleRows').innerHTML = '';
+    scheduleRowCount = 0;
+    for(let i=0;i<4;i++) addScheduleRow();
+  }
+  document.getElementById(`${prefix==='rpt'?'report':'target'}SuccessView`).classList.add('hidden');
+  document.getElementById(`${prefix}FormView`).classList.remove('hidden');
+}
+
+/* ============================================================
+   PDF GENERATION
+   ============================================================ */
+function downloadPdf(kind){
+  const sub = lastSubmission[kind];
+  if(!sub) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const title = kind==='report' ? 'Daily Process Report' : "Tomorrow's Targets";
+  const timeLabel = kind==='report' ? 'Est. End' : 'Est. Start';
+
+  doc.setFillColor(15,41,66);
+  doc.rect(0,0,210,26,'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(15);
+  doc.text(CONFIG.COMPANY_NAME, 14, 12);
+  doc.setFontSize(10.5);
+  doc.text(title, 14, 20);
+
+  doc.setTextColor(20,20,20);
+  doc.setFontSize(10);
+  let y = 34;
+  doc.setFont(undefined,'bold'); doc.text('Date:', 14, y);
+  doc.setFont(undefined,'normal'); doc.text(sub.timestamp.toLocaleString(), 32, y);
+  doc.setFont(undefined,'bold'); doc.text('Reported By:', 110, y);
+  doc.setFont(undefined,'normal'); doc.text(sub.reporter, 142, y);
+  y += 8;
+
+  doc.setFontSize(8.5);
+  const colX = {n:14, proc:22, batch:58, time:90, spec:112, rem:150};
+  doc.setFont(undefined,'bold');
+  doc.text('#', colX.n, y); doc.text('Process', colX.proc, y); doc.text('Batch #', colX.batch, y);
+  doc.text(timeLabel, colX.time, y); doc.text('Specialist/Team', colX.spec, y); doc.text('Remarks', colX.rem, y);
+  y += 2;
+  doc.setDrawColor(200); doc.line(14, y, 196, y);
+  y += 5;
+  doc.setFont(undefined,'normal');
+
+  sub.processRows.forEach((r,i)=>{
+    if(y > 275){ doc.addPage(); y = 20; }
+    const remarksLines = doc.splitTextToSize(r.remarks || '-', 44);
+    doc.text(String(i+1), colX.n, y);
+    doc.text(r.process, colX.proc, y);
+    doc.text(r.batchNumber || '-', colX.batch, y);
+    doc.text(r.estTime || '-', colX.time, y);
+    doc.text(doc.splitTextToSize(r.specialistTeam || '-', 36), colX.spec, y);
+    doc.text(remarksLines, colX.rem, y);
+    const lineCount = Math.max(remarksLines.length, 1);
+    y += lineCount * 4.5 + 3;
+  });
+
+  y += 4;
+  if(y > 270){ doc.addPage(); y = 20; }
+  doc.setFont(undefined,'bold'); doc.setFontSize(10.5);
+  if(kind==='report'){
+    doc.text('Non-Batch Works:', 14, y); y += 6;
+    doc.setFont(undefined,'normal'); doc.setFontSize(9.5);
+    doc.text(doc.splitTextToSize(sub.extra.nonBatch || '-', 180), 14, y);
+  } else {
+    doc.text('Schedule Works:', 14, y); y += 6;
+    doc.setFontSize(9.5);
+    if(!sub.extra.scheduleRows.length){
+      doc.setFont(undefined,'normal'); doc.text('-', 14, y);
+    } else {
+      sub.extra.scheduleRows.forEach(sr=>{
+        if(y > 280){ doc.addPage(); y = 20; }
+        doc.setFont(undefined,'normal');
+        doc.text(`- ${sr.work || '-'}  (${sr.name || '-'})`, 14, y);
+        y += 6;
+      });
+    }
+  }
+
+  const filename = kind==='report'
+    ? `Daily_Report_${sub.timestamp.toISOString().slice(0,10)}.pdf`
+    : `Tomorrow_Targets_${sub.timestamp.toISOString().slice(0,10)}.pdf`;
+  doc.save(filename);
+}
+
+/* ============================================================
+   WHATSAPP SHARE
+   ============================================================ */
+function shareWhatsapp(kind){
+  const sub = lastSubmission[kind];
+  if(!sub) return;
+  const timeLabel = kind==='report' ? 'End' : 'Start';
+  const lines = sub.processRows
+    .filter(r=>r.batchNumber || r.remarks || r.specialistTeam)
+    .map(r=>`*${r.process}*: Batch ${r.batchNumber||'-'} | ${timeLabel} ${r.estTime||'-'} | ${r.specialistTeam||'-'}${r.remarks ? ' | '+r.remarks : ''}`)
+    .join('\n');
+
+  let extraText = '';
+  if(kind==='report'){
+    extraText = `\n*Non-Batch Works:*\n${sub.extra.nonBatch || '-'}`;
+  } else {
+    const sw = sub.extra.scheduleRows.map(sr=>`- ${sr.work||'-'} (${sr.name||'-'})`).join('\n');
+    extraText = `\n*Schedule Works:*\n${sw || '-'}`;
+  }
+
+  const text =
+`*${CONFIG.COMPANY_NAME.toUpperCase()} — ${kind==='report' ? 'DAILY REPORT' : "TOMORROW'S TARGETS"}*
+*Reported by:* ${sub.reporter}
+*Date:* ${sub.timestamp.toLocaleDateString()}
+
+${lines || '(no entries)'}
+${extraText}`;
+
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+/* ============================================================
+   ADMIN DASHBOARD
+   ============================================================ */
+function checkPin(){
+  const val = document.getElementById('pinInput').value.trim();
+  if(val === CONFIG.ADMIN_PIN){
+    document.getElementById('pinView').classList.add('hidden');
+    document.getElementById('dashboardView').classList.remove('hidden');
+    loadSubmissions();
+  } else {
+    document.getElementById('pinMsg').textContent = 'Incorrect PIN';
+  }
+}
+
+function loadSubmissions(){
+  if(CONFIG.GAS_URL.includes('PASTE_YOUR')){
+    document.getElementById('tableEmpty').textContent = 'Backend not configured yet — set GAS_URL in the code.';
+    document.getElementById('tableEmpty').classList.remove('hidden');
+    return;
+  }
+  const callbackName = 'brt_cb_' + Date.now();
+  window[callbackName] = function(data){
+    allSubmissions = data || [];
+    renderStats();
+    renderTable();
+    delete window[callbackName];
+    script.remove();
+  };
+  const script = document.createElement('script');
+  script.src = `${CONFIG.GAS_URL}?callback=${callbackName}&t=${Date.now()}`;
+  document.body.appendChild(script);
+}
+
+function renderStats(){
+  document.getElementById('statTotal').textContent = allSubmissions.length;
+  const todayStr = new Date().toDateString();
+  const todayCount = allSubmissions.filter(r => new Date(r.Timestamp).toDateString() === todayStr).length;
+  document.getElementById('statToday').textContent = todayCount;
+  const batches = new Set(allSubmissions.map(r=>r.BatchNumber).filter(Boolean));
+  document.getElementById('statBatches').textContent = batches.size;
+}
+
+function renderTable(){
+  const type = document.getElementById('filterType').value;
+  const process = document.getElementById('filterProcess').value;
+  const batch = document.getElementById('filterBatch').value.trim().toLowerCase();
+  const date = document.getElementById('filterDate').value;
+
+  let rows = allSubmissions.filter(r=>{
+    if(type && r.ReportType !== type) return false;
+    if(process && r.Process !== process) return false;
+    if(batch && !String(r.BatchNumber||'').toLowerCase().includes(batch)) return false;
+    if(date && new Date(r.Timestamp).toISOString().slice(0,10) !== date) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = '';
+  document.getElementById('tableEmpty').classList.toggle('hidden', rows.length>0);
+
+  rows.forEach(r=>{
+    tbody.innerHTML += `
+      <tr>
+        <td>${new Date(r.Timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}</td>
+        <td><span class="badge ${r.ReportType==='Actual'?'badge-ok':'badge-warn'}">${r.ReportType==='Actual'?'Report':'Target'}</span></td>
+        <td>${r.Process}</td>
+        <td>${r.BatchNumber || '-'}</td>
+        <td>${r.EstTime || '-'}</td>
+        <td>${r.SpecialistTeam || '-'}</td>
+        <td>${r.Remarks || '-'}</td>
+      </tr>`;
+  });
+}
+
+/* ============================================================
+   PRESET TASK LIST (reference PDF, admin only)
+   ============================================================ */
+function generatePresetTaskList(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFillColor(15,41,66);
+  doc.rect(0,0,210,26,'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(15);
+  doc.text(CONFIG.COMPANY_NAME, 14, 12);
+  doc.setFontSize(10.5);
+  doc.text('Preset Task Checklist — Reference (not yet in daily use)', 14, 20);
+
+  doc.setTextColor(20,20,20);
+  let y = 36;
+  CONFIG.PROCESSES.forEach(proc=>{
+    const tasks = CONFIG.TASKS_BY_PROCESS[proc] || CONFIG.DEFAULT_TASKS;
+    if(y > 265){ doc.addPage(); y = 20; }
+    doc.setFont(undefined,'bold'); doc.setFontSize(12);
+    doc.setTextColor(15,41,66);
+    doc.text(proc, 14, y);
+    y += 6;
+    doc.setFont(undefined,'normal'); doc.setFontSize(10);
+    doc.setTextColor(40,40,40);
+    tasks.forEach(t=>{
+      if(y > 275){ doc.addPage(); y = 20; }
+      doc.text('- ' + t, 18, y);
+      y += 6;
+    });
+    y += 4;
+  });
+
+  doc.save('Preset_Task_Checklist_Reference.pdf');
+}
+
+init();
+</script>
+</body>
+</html>
