@@ -14,7 +14,7 @@
   const CONFIG = {
     COMPANY_NAME: "Innotek Products",
     // Paste your Apps Script Web App URL here (see Code.gs setup notes)
-    GAS_URL: "https://script.google.com/macros/s/AKfycbyYLNoQLJkRqJ3m04FbDILahONJ8bKZSAzBfnLdmxzZfEpwgqOra8P4Zd8v4Cbh840Dqw/exec",
+    GAS_URL: "https://script.google.com/macros/s/AKfycbzhax5dIcUpsDizPOSUqwhMPSnZs0zfr7-KhX61f3gIk6swlW3x9VVMwubfq20iUkCCeg/exec",
     // Simple PIN to open the Admin Dashboard (change this)
     ADMIN_PIN: "1234",
     // Process sequence - order here is the order they appear on the form
@@ -93,7 +93,7 @@
   label{display:block; font-size:10.5px; font-weight:600; color:var(--muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:.03em;}
   .field{margin-bottom:10px;}
   input[type=text], input[type=time], select, textarea{
-    width:100%; padding:8px 10px; border:1.5px solid var(--line); border-radius:8px;
+    width:100%; min-width:0; padding:8px 10px; border:1.5px solid var(--line); border-radius:8px;
     font-size:14px; background:#fbfbfc; color:var(--text); height:38px;
   }
   textarea{height:auto; min-height:38px; resize:vertical; line-height:1.35; padding-top:8px;}
@@ -113,12 +113,10 @@
     display:flex; align-items:center; justify-content:center; flex-shrink:0;
   }
   .proc-box .proc-name{font-family:'Outfit',sans-serif; font-size:14.5px; font-weight:700; color:var(--navy);}
-  .proc-row{display:flex; gap:8px; margin-bottom:8px;}
+  .proc-row{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin-bottom:8px;}
+  .proc-row.proc-row-split{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);}
   .proc-row:last-child{margin-bottom:0;}
-  .proc-row .field{margin-bottom:0;}
-  .proc-row .cell-eq{flex:1;}
-  .proc-row .cell-narrow{flex:1;}
-  .proc-row .cell-wide{flex:1.6;}
+  .proc-row .field{margin-bottom:0; min-width:0;}
 
   .section-box{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
     padding:16px; margin:16px 0;}
@@ -183,9 +181,8 @@
   .spinner{width:18px; height:18px; border:2.5px solid rgba(255,255,255,.4); border-top-color:#fff;
     border-radius:50%; animation:spin .7s linear infinite; display:inline-block;}
   @keyframes spin{to{transform:rotate(360deg);}}
-  @media(max-width:380px){
-    .proc-row{flex-direction:column;}
-    .proc-row .cell-wide, .proc-row .cell-eq, .proc-row .cell-narrow{flex:none; width:100%;}
+  @media(max-width:340px){
+    .proc-row, .proc-row.proc-row-split{grid-template-columns:1fr;}
   }
 </style>
 </head>
@@ -312,6 +309,22 @@
       </div>
 
       <div class="card" style="padding:16px;">
+        <h2 style="font-size:15px; color:var(--navy); margin-bottom:4px;">Combine Tomorrow's Targets</h2>
+        <div class="hint" style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+          Merges every team member's Tomorrow Targets entry for the selected date into one shareable report.
+        </div>
+        <div class="filters" style="margin-bottom:10px;">
+          <input type="date" id="combineDate">
+          <button class="btn btn-primary btn-sm" style="flex:1;" onclick="buildCombinedTargets()">Combine</button>
+        </div>
+        <div id="combinePreview"></div>
+        <div class="btn-row hidden" id="combineActions">
+          <button class="btn btn-gold" onclick="downloadCombinedPdf()">📥 Download Combined PDF</button>
+          <button class="btn btn-wa" onclick="shareCombinedWhatsapp()">💬 Share Combined via WhatsApp</button>
+        </div>
+      </div>
+
+      <div class="card" style="padding:16px;">
         <div class="filters">
           <select id="filterType" onchange="renderTable()">
             <option value="">All Types</option>
@@ -325,7 +338,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Time</th><th>Type</th><th>Process</th><th>Batch #</th><th>Est. Time</th><th>Specialist/Team</th><th>Remarks / Work</th></tr>
+              <tr><th>Time</th><th>Type</th><th>Process</th><th>Batch #</th><th>Est. Time</th><th>Specialist/Team</th><th>Reporter</th><th>Remarks / Work</th></tr>
             </thead>
             <tbody id="tableBody"></tbody>
           </table>
@@ -374,6 +387,9 @@ function init(){
   CONFIG.PROCESSES.forEach(p=>{
     filterProcess.innerHTML += `<option value="${p}">${p}</option>`;
   });
+
+  const combineDateInput = document.getElementById('combineDate');
+  if(combineDateInput) combineDateInput.value = tmrw.toISOString().slice(0,10);
 }
 
 function switchTab(tab){
@@ -400,21 +416,21 @@ function renderProcessList(prefix, containerId, timeLabel){
           <div class="proc-name">${proc}</div>
         </div>
         <div class="proc-row">
-          <div class="field cell-eq">
+          <div class="field">
             <label>Batch Number</label>
             <input type="text" id="${prefix}_batch_${i}" placeholder="e.g. BATCH-2026-014">
           </div>
-          <div class="field cell-eq">
+          <div class="field">
             <label>${timeLabel}</label>
             <input type="time" id="${prefix}_time_${i}">
           </div>
         </div>
-        <div class="proc-row">
-          <div class="field cell-narrow">
+        <div class="proc-row proc-row-split">
+          <div class="field">
             <label>Specialist + Team</label>
             <input type="text" id="${prefix}_spec_${i}" placeholder="Name + team size">
           </div>
-          <div class="field cell-wide">
+          <div class="field">
             <label>Remarks / Observations</label>
             <input type="text" id="${prefix}_remarks_${i}" placeholder="Notes, deviations, observations">
           </div>
@@ -480,31 +496,41 @@ function submitForm(kind){
   const processRows = collectProcessRows(prefix);
   const submissionId = kind + '_' + Date.now();
   const timestamp = new Date();
+  // Target date = tomorrow relative to now, in YYYY-MM-DD, for combining across users
+  const targetDate = (()=>{ const d=new Date(); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })();
 
   let rows = [];
-  processRows.forEach(pr=>{
-    rows.push({
-      submissionId, reportType: kind==='report' ? 'Actual' : 'Target',
-      process: pr.process, batchNumber: pr.batchNumber, estTime: pr.estTime,
-      specialistTeam: pr.specialistTeam, remarks: pr.remarks
+  processRows
+    .filter(pr => pr.batchNumber || pr.estTime || pr.specialistTeam || pr.remarks) // skip untouched processes
+    .forEach(pr=>{
+      rows.push({
+        submissionId, reportType: kind==='report' ? 'Actual' : 'Target',
+        reporter, targetDate: kind==='target' ? targetDate : '',
+        process: pr.process, batchNumber: pr.batchNumber, estTime: pr.estTime,
+        specialistTeam: pr.specialistTeam, remarks: pr.remarks
+      });
     });
-  });
 
   let extra = null;
   if(kind === 'report'){
     const nonBatch = document.getElementById('rpt_nonBatch').value.trim();
     extra = { nonBatch };
     if(nonBatch){
-      rows.push({submissionId, reportType:'Actual', process:'Non-Batch Works',
+      rows.push({submissionId, reportType:'Actual', reporter, targetDate:'', process:'Non-Batch Works',
         batchNumber:'', estTime:'', specialistTeam:'', remarks: nonBatch});
     }
   } else {
     const scheduleRows = collectScheduleRows();
-    extra = { scheduleRows };
+    extra = { scheduleRows, targetDate };
     scheduleRows.forEach(sr=>{
-      rows.push({submissionId, reportType:'Target', process:'Schedule Work',
+      rows.push({submissionId, reportType:'Target', reporter, targetDate, process:'Schedule Work',
         batchNumber:'', estTime:'', specialistTeam: sr.name, remarks: sr.work});
     });
+  }
+
+  if(rows.length === 0){
+    msgBox.innerHTML = `<div class="msg msg-error">Please fill in at least one process, non-batch work, or schedule item before submitting.</div>`;
+    return;
   }
 
   lastSubmission[kind] = { reporter, timestamp, processRows, extra };
@@ -513,7 +539,8 @@ function submitForm(kind){
   submitBtn.innerHTML = `<span class="spinner"></span> Saving...`;
 
   if(CONFIG.GAS_URL.includes('PASTE_YOUR')){
-    showSuccess(kind);
+    try{ showSuccess(kind); }
+    catch(err){ handleSubmitError(kind, err); }
     return;
   }
 
@@ -521,12 +548,25 @@ function submitForm(kind){
   fd.append('rows', JSON.stringify(rows));
 
   fetch(CONFIG.GAS_URL, {method:'POST', mode:'no-cors', body: fd})
-    .then(()=> showSuccess(kind))
-    .catch(()=> showSuccess(kind));
+    .then(()=>{ try{ showSuccess(kind); } catch(err){ handleSubmitError(kind, err); } })
+    .catch(err=> handleSubmitError(kind, err));
+}
+
+function handleSubmitError(kind, err){
+  console.error('Submit failed:', err);
+  const prefix = kind==='report' ? 'rpt' : 'tgt';
+  const submitBtn = document.getElementById(`${prefix}_submitBtn`);
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Submit & Generate Report';
+  document.getElementById(`${prefix}_msg`).innerHTML =
+    `<div class="msg msg-error">Something went wrong saving this. Check your internet connection and try again. (${err && err.message ? err.message : 'unknown error'})</div>`;
 }
 
 function showSuccess(kind){
   const prefix = kind==='report' ? 'rpt' : 'tgt';
+  const formViewId = kind==='report' ? 'reportFormView' : 'targetFormView';
+  const successViewId = kind==='report' ? 'reportSuccessView' : 'targetSuccessView';
+
   document.getElementById(`${prefix}_submitBtn`).disabled = false;
   document.getElementById(`${prefix}_submitBtn`).textContent = 'Submit & Generate Report';
   const sub = lastSubmission[kind];
@@ -535,12 +575,15 @@ function showSuccess(kind){
     kind==='report'
       ? `${filled} of ${CONFIG.PROCESSES.length} processes logged by ${sub.reporter}.`
       : `Targets set for ${filled} of ${CONFIG.PROCESSES.length} processes by ${sub.reporter}.`;
-  document.getElementById(`${prefix}FormView`).classList.add('hidden');
-  document.getElementById(`${prefix==='rpt'?'report':'target'}SuccessView`).classList.remove('hidden');
+  document.getElementById(formViewId).classList.add('hidden');
+  document.getElementById(successViewId).classList.remove('hidden');
 }
 
 function resetForm(kind){
   const prefix = kind==='report' ? 'rpt' : 'tgt';
+  const formViewId = kind==='report' ? 'reportFormView' : 'targetFormView';
+  const successViewId = kind==='report' ? 'reportSuccessView' : 'targetSuccessView';
+
   renderProcessList(prefix, `${prefix}_processList`, kind==='report' ? 'Estimated End Time' : 'Estimated Start Time');
   if(kind==='report'){
     document.getElementById('rpt_nonBatch').value = '';
@@ -549,8 +592,8 @@ function resetForm(kind){
     scheduleRowCount = 0;
     for(let i=0;i<4;i++) addScheduleRow();
   }
-  document.getElementById(`${prefix==='rpt'?'report':'target'}SuccessView`).classList.add('hidden');
-  document.getElementById(`${prefix}FormView`).classList.remove('hidden');
+  document.getElementById(successViewId).classList.add('hidden');
+  document.getElementById(formViewId).classList.remove('hidden');
 }
 
 /* ============================================================
@@ -732,9 +775,152 @@ function renderTable(){
         <td>${r.BatchNumber || '-'}</td>
         <td>${r.EstTime || '-'}</td>
         <td>${r.SpecialistTeam || '-'}</td>
+        <td>${r.Reporter || '-'}</td>
         <td>${r.Remarks || '-'}</td>
       </tr>`;
   });
+}
+
+/* ============================================================
+   COMBINE TOMORROW'S TARGETS (multi-user merge)
+   ============================================================ */
+let combinedData = null;
+
+function buildCombinedTargets(){
+  let date = document.getElementById('combineDate').value;
+  if(!date){
+    const d = new Date(); d.setDate(d.getDate()+1);
+    date = d.toISOString().slice(0,10);
+    document.getElementById('combineDate').value = date;
+  }
+
+  const rows = allSubmissions.filter(r => r.ReportType === 'Target' && r.TargetDate === date);
+  const preview = document.getElementById('combinePreview');
+  const actions = document.getElementById('combineActions');
+
+  if(rows.length === 0){
+    preview.innerHTML = `<div class="empty" style="padding:14px 0;">No Tomorrow Targets entries found for ${date} yet.</div>`;
+    actions.classList.add('hidden');
+    combinedData = null;
+    return;
+  }
+
+  // Group by process (excluding the Schedule Work pseudo-process)
+  const byProcess = {};
+  const scheduleItems = [];
+  const reporters = new Set();
+
+  rows.forEach(r=>{
+    if(r.Reporter) reporters.add(r.Reporter);
+    if(r.Process === 'Schedule Work'){
+      scheduleItems.push({ work: r.Remarks, name: r.SpecialistTeam, reporter: r.Reporter });
+    } else {
+      if(!byProcess[r.Process]) byProcess[r.Process] = [];
+      byProcess[r.Process].push(r);
+    }
+  });
+
+  combinedData = { date, byProcess, scheduleItems, reporters: Array.from(reporters) };
+
+  // Preview (ordered by CONFIG.PROCESSES)
+  let html = `<div style="font-size:12.5px; color:var(--muted); margin:6px 0 10px;">
+    ${rows.length} entries from ${combinedData.reporters.join(', ') || 'team'}</div>`;
+  CONFIG.PROCESSES.forEach(proc=>{
+    if(!byProcess[proc]) return;
+    html += `<div style="margin-bottom:10px;"><div style="font-family:'Outfit',sans-serif; font-weight:700; font-size:13.5px; color:var(--navy); margin-bottom:4px;">${proc}</div>`;
+    byProcess[proc].forEach(r=>{
+      html += `<div style="font-size:12.5px; color:var(--text); padding:6px 8px; background:#fbfbfc; border:1px solid var(--line); border-radius:7px; margin-bottom:4px;">
+        Batch ${r.BatchNumber||'-'} · Start ${r.EstTime||'-'} · ${r.SpecialistTeam||'-'}${r.Remarks ? ' · '+r.Remarks : ''} <span style="color:var(--muted);">(${r.Reporter||'-'})</span>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+  if(scheduleItems.length){
+    html += `<div style="font-family:'Outfit',sans-serif; font-weight:700; font-size:13.5px; color:var(--navy); margin-bottom:4px;">Schedule Works</div>`;
+    scheduleItems.forEach(sr=>{
+      html += `<div style="font-size:12.5px; padding:6px 8px; background:#fbfbfc; border:1px solid var(--line); border-radius:7px; margin-bottom:4px;">
+        ${sr.work||'-'} — ${sr.name||'-'} <span style="color:var(--muted);">(${sr.reporter||'-'})</span></div>`;
+    });
+  }
+  preview.innerHTML = html;
+  actions.classList.remove('hidden');
+}
+
+function downloadCombinedPdf(){
+  if(!combinedData) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  doc.setFillColor(15,41,66);
+  doc.rect(0,0,210,26,'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(15);
+  doc.text(CONFIG.COMPANY_NAME, 14, 12);
+  doc.setFontSize(10.5);
+  doc.text(`Combined Tomorrow's Targets — ${combinedData.date}`, 14, 20);
+
+  doc.setTextColor(20,20,20);
+  let y = 34;
+  doc.setFont(undefined,'normal'); doc.setFontSize(9.5);
+  doc.text(`Contributors: ${combinedData.reporters.join(', ') || '-'}`, 14, y);
+  y += 8;
+
+  CONFIG.PROCESSES.forEach(proc=>{
+    const entries = combinedData.byProcess[proc];
+    if(!entries) return;
+    if(y > 270){ doc.addPage(); y = 20; }
+    doc.setFont(undefined,'bold'); doc.setFontSize(11.5); doc.setTextColor(15,41,66);
+    doc.text(proc, 14, y); y += 6;
+    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(30,30,30);
+    entries.forEach(r=>{
+      if(y > 278){ doc.addPage(); y = 20; }
+      const line = `Batch ${r.BatchNumber||'-'} | Start ${r.EstTime||'-'} | ${r.SpecialistTeam||'-'}${r.Remarks ? ' | '+r.Remarks : ''}  (${r.Reporter||'-'})`;
+      const wrapped = doc.splitTextToSize(line, 180);
+      doc.text(wrapped, 18, y);
+      y += wrapped.length * 4.5 + 2;
+    });
+    y += 3;
+  });
+
+  if(combinedData.scheduleItems.length){
+    if(y > 265){ doc.addPage(); y = 20; }
+    doc.setFont(undefined,'bold'); doc.setFontSize(11.5); doc.setTextColor(15,41,66);
+    doc.text('Schedule Works', 14, y); y += 6;
+    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(30,30,30);
+    combinedData.scheduleItems.forEach(sr=>{
+      if(y > 278){ doc.addPage(); y = 20; }
+      doc.text(`- ${sr.work||'-'} — ${sr.name||'-'}  (${sr.reporter||'-'})`, 18, y);
+      y += 6;
+    });
+  }
+
+  doc.save(`Combined_Tomorrow_Targets_${combinedData.date}.pdf`);
+}
+
+function shareCombinedWhatsapp(){
+  if(!combinedData) return;
+  let lines = [];
+  CONFIG.PROCESSES.forEach(proc=>{
+    const entries = combinedData.byProcess[proc];
+    if(!entries) return;
+    lines.push(`*${proc}*`);
+    entries.forEach(r=>{
+      lines.push(`- Batch ${r.BatchNumber||'-'} | Start ${r.EstTime||'-'} | ${r.SpecialistTeam||'-'}${r.Remarks ? ' | '+r.Remarks : ''} (${r.Reporter||'-'})`);
+    });
+  });
+  if(combinedData.scheduleItems.length){
+    lines.push(`*Schedule Works*`);
+    combinedData.scheduleItems.forEach(sr=>{
+      lines.push(`- ${sr.work||'-'} — ${sr.name||'-'} (${sr.reporter||'-'})`);
+    });
+  }
+  const text =
+`*${CONFIG.COMPANY_NAME.toUpperCase()} — COMBINED TOMORROW'S TARGETS*
+*Date:* ${combinedData.date}
+*Contributors:* ${combinedData.reporters.join(', ') || '-'}
+
+${lines.join('\n')}`;
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
 }
 
 /* ============================================================
