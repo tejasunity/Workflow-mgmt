@@ -14,9 +14,9 @@
   const CONFIG = {
     COMPANY_NAME: "Innotek Products",
     // Paste your Apps Script Web App URL here (see Code.gs setup notes)
-    GAS_URL: "https://script.google.com/macros/s/https://script.google.com/macros/s/AKfycbzL3gcWRyKCRMo6DAKh43rwxe51QQrqOwwpcELh246W4uObTZJXoDRfLfwk0d6xe8tdUg/exec",
+    GAS_URL: "https://script.google.com/macros/s/AKfycbylCQEUqKa7eMidQOuY0V8wHc-hup12p6LM-zrBgA8Xn462kAZwXhaBrAFexofj2OF_/exec",
     // Simple PIN to open the Admin Dashboard (change this)
-    ADMIN_PIN: "2072",
+    ADMIN_PIN: "1234",
     // Process sequence - order here is the order they appear on the form
     PROCESSES: [
       "Pre-Mix", "CB", "Decant", "Tank Wash", "RDS",
@@ -315,6 +315,16 @@
         <div class="stat"><div class="num" id="statTotal">0</div><div class="lbl">Total Entries</div></div>
         <div class="stat"><div class="num" id="statToday">0</div><div class="lbl">Today</div></div>
         <div class="stat"><div class="num" id="statBatches">0</div><div class="lbl">Batches</div></div>
+      </div>
+
+      <div class="card" style="padding:16px; background:#FCF6E9; border-color:var(--gold);">
+        <h2 style="font-size:15px; color:var(--navy); margin-bottom:4px;">Connection Diagnostics</h2>
+        <div class="hint" style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+          If entries aren't showing, tap this to open your backend URL directly. It should show
+          <code>[]</code> (empty) or your data as plain text. Any other message means the backend
+          setup needs fixing — see the note at the top of Code.gs for what each message means.
+        </div>
+        <button class="btn btn-outline" onclick="testBackendUrl()">🔍 Test Backend URL</button>
       </div>
 
       <div class="card" style="padding:16px;">
@@ -832,7 +842,7 @@ function shareWhatsapp(kind){
 ${lines || '(no entries)'}
 ${extraText}`;
 
-  openWhatsAppLink(`https://wa.me/?text=${encodeURIComponent(text)}`);
+  openInNewTab(`https://wa.me/?text=${encodeURIComponent(text)}`);
 
   // Land back on a usable page (pre-filled form) instead of a blank/stuck screen.
   // Persisted data means the entry is not lost even if the browser fully navigates away.
@@ -841,7 +851,7 @@ ${extraText}`;
 
 /* Opens a WhatsApp share link in a way that avoids the "blank tab" issue some
    mobile browsers show with window.open(url, '_blank') for wa.me links. */
-function openWhatsAppLink(url){
+function openInNewTab(url){
   try{
     const a = document.createElement('a');
     a.href = url;
@@ -905,6 +915,14 @@ function loadSubmissions(){
     if(settled) return;
     settled = true;
     cleanup();
+    if(data && data.error){
+      allSubmissions = [];
+      renderStats();
+      tableEmpty.textContent = 'Backend error: ' + data.message + ' — open Test Backend URL below for more detail, or re-check SHEET_ID in Code.gs.';
+      tableEmpty.classList.remove('hidden');
+      document.getElementById('tableBody').innerHTML = '';
+      return;
+    }
     allSubmissions = Array.isArray(data) ? data : [];
     renderStats();
     renderTable();
@@ -920,6 +938,14 @@ function loadSubmissions(){
   };
   script.src = `${CONFIG.GAS_URL}?callback=${callbackName}&t=${Date.now()}`;
   document.body.appendChild(script);
+}
+
+function testBackendUrl(){
+  if(CONFIG.GAS_URL.includes('PASTE_YOUR')){
+    alert('GAS_URL is not set yet in the code (still shows PASTE_YOUR_GAS_WEB_APP_URL_HERE).');
+    return;
+  }
+  openInNewTab(CONFIG.GAS_URL); // reuses the same reliable "open in new tab" helper
 }
 
 function safeDateKey(ts){
@@ -1111,7 +1137,7 @@ function shareCombinedWhatsapp(){
 *Contributors:* ${combinedData.reporters.join(', ') || '-'}
 
 ${lines.join('\n')}`;
-  openWhatsAppLink(`https://wa.me/?text=${encodeURIComponent(text)}`);
+  openInNewTab(`https://wa.me/?text=${encodeURIComponent(text)}`);
 }
 
 /* ============================================================
